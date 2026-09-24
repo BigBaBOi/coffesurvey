@@ -88,14 +88,25 @@ export default function LiveAnalyticsDashboard({ onOpenQR }) {
       setTimeout(() => setPulse(false), 2000);
     });
 
-    // 4. Poll Cloud Database every 3.5 seconds so presenter's laptop auto-updates live from mobile scans!
+    // 4. Poll Cloud Database safely every 6 seconds (only when tab is visible to prevent DoS & save bandwidth)
     const pollTimer = setInterval(() => {
-      syncCloud(false);
-    }, 3500);
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+        syncCloud(false);
+      }
+    }, 6000);
+
+    // Sync immediately when user switches back to tab
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        syncCloud(false);
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
 
     return () => {
       unsubscribe();
       clearInterval(pollTimer);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
   }, []);
 
