@@ -1,13 +1,17 @@
-// Helper module for real-time survey data management & cross-device sync
+// Helper module for real-time survey data management & cross-device cloud sync
 
 const STORAGE_KEY = 'vhu_survey_responses_v1';
 const CHANNEL_NAME = 'vhu_survey_realtime';
 const EVENT_NAME = 'vhu_survey_updated';
 
+// Cloud Master Store ID on free global REST API for instant cross-device realtime sync
+const CLOUD_MASTER_ID = 'ff808181a09d98f701a0d3162a4e06c1';
+const CLOUD_API_URL = `https://api.restful-api.dev/objects/${CLOUD_MASTER_ID}`;
+
 // Default clean storage (0 initial demo responses)
 const INITIAL_SEED_RESPONSES = [];
 
-// Initialize LocalStorage if empty (raw === null)
+// Initialize / Read LocalStorage
 export function getSavedResponses() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -22,11 +26,53 @@ export function getSavedResponses() {
   }
 }
 
-// Save a new student response & broadcast change
-export function saveStudentResponse(studentName, mssv, answers) {
+// Fetch responses from global Cloud database and merge with local data
+export async function fetchCloudResponses() {
+  try {
+    const res = await fetch(CLOUD_API_URL, { cache: 'no-store' });
+    if (!res.ok) return getSavedResponses();
+    const json = await res.json();
+    const cloudList = json?.data?.surveyList;
+    if (Array.isArray(cloudList)) {
+      const localList = getSavedResponses();
+      
+      // Merge by ID or unique composite key
+      const mergedMap = new Map();
+      
+      // Add local items first
+      localList.forEach(item => {
+        if (item && item.id) mergedMap.set(item.id, item);
+      });
+
+      // Overlay cloud items
+      cloudList.forEach(item => {
+        if (item && item.id) mergedMap.set(item.id, item);
+      });
+
+      const merged = Array.from(mergedMap.values()).sort(
+        (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+      );
+
+      // Save merged list locally if count differs
+      if (merged.length !== localList.length) {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent(EVENT_NAME, { detail: { type: 'CLOUD_SYNCED', count: merged.length } }));
+        }
+      }
+      return merged;
+    }
+  } catch (err) {
+    console.warn("Cloud sync network notice:", err.message);
+  }
+  return getSavedResponses();
+}
+
+// Save a new student response & sync both locally and to Cloud
+export async function saveStudentResponse(studentName, mssv, answers) {
   const responses = getSavedResponses();
   const newEntry = {
-    id: 'res_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4),
+    id: 'res_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6),
     timestamp: new Date().toISOString(),
     studentName: (studentName || 'Sinh viên VHU').trim(),
     mssv: (mssv || '251A' + Math.floor(100000 + Math.random() * 900000)).trim(),
@@ -34,33 +80,61 @@ export function saveStudentResponse(studentName, mssv, answers) {
   };
 
   const updated = [newEntry, ...responses];
+  
+  // 1. Instant local persistence
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
   } catch (e) {
     console.error("Error writing to localStorage:", e);
   }
 
-  // Trigger local in-tab event
+  // 2. Broadcast immediately in current tab & across tabs
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new CustomEvent(EVENT_NAME, { detail: { type: 'NEW_RESPONSE', data: newEntry } }));
   }
 
-  // Broadcast via BroadcastChannel if supported
   if (typeof BroadcastChannel !== 'undefined') {
     try {
       const channel = new BroadcastChannel(CHANNEL_NAME);
       channel.postMessage({ type: 'NEW_RESPONSE', data: newEntry });
       channel.close();
-    } catch (err) {
-      console.warn("BroadcastChannel error:", err);
+    } catch (err) {}
+  }
+
+  // 3. Sync to Global Cloud Store (so presenter's laptop receives it immediately from any phone)
+  try {
+    // Fetch latest cloud state first to prevent overwrites
+    let latestList = [newEntry];
+    try {
+      const cloudRes = await fetch(CLOUD_API_URL, { cache: 'no-store' });
+      if (cloudRes.ok) {
+        const cloudJson = await cloudRes.json();
+        const existingCloudList = cloudJson?.data?.surveyList || [];
+        // Filter duplicate if already exists
+        const filtered = existingCloudList.filter(x => x.id !== newEntry.id);
+        latestList = [newEntry, ...filtered];
+      }
+    } catch (e) {
+      latestList = updated;
     }
+
+    await fetch(CLOUD_API_URL, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: 'VHU_MARKETING_SURVEY_PROD_V1',
+        data: { surveyList: latestList }
+      })
+    });
+  } catch (cloudErr) {
+    console.warn("Cloud push notice:", cloudErr);
   }
 
   return newEntry;
 }
 
-// Completely wipe all survey responses (Set to empty array [])
-export function clearAllResponses() {
+// Completely wipe all survey responses (Local + Cloud)
+export async function clearAllResponses() {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify([]));
   } catch (e) {
@@ -78,6 +152,19 @@ export function clearAllResponses() {
       channel.close();
     } catch (err) {}
   }
+
+  // Clear cloud master store
+  try {
+    await fetch(CLOUD_API_URL, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: 'VHU_MARKETING_SURVEY_PROD_V1',
+        data: { surveyList: [] }
+      })
+    });
+  } catch (e) {}
+
   return [];
 }
 
@@ -86,7 +173,7 @@ export function resetResponses() {
   return clearAllResponses();
 }
 
-// Listen to real-time broadcasts across tabs and current tab
+// Listen to real-time broadcasts across tabs, current tab & cloud
 export function subscribeRealtimeUpdates(callback) {
   let channel = null;
 
@@ -107,7 +194,7 @@ export function subscribeRealtimeUpdates(callback) {
     }
   };
 
-  // 3. Custom in-tab event listener (same tab)
+  // 3. Custom in-tab event listener (same tab / cloud sync)
   const handleCustomEvent = (event) => {
     callback(event.detail || { type: 'LOCAL_UPDATE' });
   };
@@ -127,7 +214,7 @@ export function subscribeRealtimeUpdates(callback) {
 }
 
 // Generate realistic demo student survey responses for live testing/presentation
-export function generateSampleResponses(count = 12) {
+export async function generateSampleResponses(count = 12) {
   const sampleStudents = [
     { name: 'Trần Văn Hoàng', mssv: '251A301124' },
     { name: 'Lê Thị Thu Thảo', mssv: '251A140231' },
@@ -149,7 +236,6 @@ export function generateSampleResponses(count = 12) {
   const loyaltyOptions = ['Thường chọn thương hiệu quen thuộc', 'Thích thử thương hiệu mới', 'Linh hoạt tùy theo bạn bè'];
   const reasonsList = ['Giá cao hơn', 'Chất lượng cà phê giảm', 'Không gian quán không phù hợp', 'Thái độ phục vụ kém', 'Thương hiệu đối thủ có khuyến mãi tốt hơn'];
   const channelsList = ['Mạng xã hội (Facebook, TikTok...)', 'Bạn bè, người thân giới thiệu', 'Đi ngang qua thấy quán', 'Biển quảng cáo, KOLs'];
-
   const factorsList = ['Giá cả', 'Chất lượng cà phê', 'Hương vị', 'Mức độ nổi tiếng thương hiệu', 'Không gian quán', 'Vị trí cửa hàng', 'Chất lượng phục vụ', 'Khuyến mãi / Ưu đãi', 'Sự đa dạng menu'];
 
   const generated = [];
@@ -167,7 +253,7 @@ export function generateSampleResponses(count = 12) {
     likertScores['Không gian quán'] = i % 2 === 0 ? 5 : 4;
 
     generated.push({
-      id: 'seed_' + (Date.now() + i),
+      id: 'seed_' + (Date.now() + i) + '_' + Math.random().toString(36).substr(2, 4),
       timestamp: new Date(Date.now() - (selectedCount - i) * 1000 * 120).toISOString(),
       studentName: student.name,
       mssv: student.mssv,
@@ -190,9 +276,9 @@ export function generateSampleResponses(count = 12) {
     });
   }
 
+  const current = getSavedResponses();
+  const merged = [...generated, ...current];
   try {
-    const current = getSavedResponses();
-    const merged = [...generated, ...current];
     localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
   } catch (e) {}
 
@@ -207,6 +293,18 @@ export function generateSampleResponses(count = 12) {
       channel.close();
     } catch (e) {}
   }
+
+  // Push to cloud master store
+  try {
+    await fetch(CLOUD_API_URL, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: 'VHU_MARKETING_SURVEY_PROD_V1',
+        data: { surveyList: merged }
+      })
+    });
+  } catch (e) {}
 
   return generated;
 }

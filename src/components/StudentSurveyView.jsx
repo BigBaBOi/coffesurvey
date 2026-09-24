@@ -54,17 +54,25 @@ export default function StudentSurveyView() {
     });
   };
 
-  const handleSubmit = (e) => {
-    e.preventDefault();
-    // Save to real-time storage & broadcast
-    saveStudentResponse(studentName, mssv, answers);
-    setIsSubmitted(true);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-    confetti({
-      particleCount: 120,
-      spread: 80,
-      origin: { y: 0.6 }
-    });
+  const handleSubmit = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    setIsSubmitting(true);
+    try {
+      // Save to real-time storage & cloud broadcast
+      await saveStudentResponse(studentName, mssv, answers);
+    } catch (err) {
+      console.warn("Submit notice:", err);
+    } finally {
+      setIsSubmitting(false);
+      setIsSubmitted(true);
+      confetti({
+        particleCount: 120,
+        spread: 80,
+        origin: { y: 0.6 }
+      });
+    }
   };
 
   const completedCount = Object.keys(answers).length;
@@ -263,9 +271,10 @@ export default function StudentSurveyView() {
                 <button
                   className="control-btn control-btn-primary"
                   onClick={handleSubmit}
-                  style={{ background: 'linear-gradient(135deg, #10B981, #059669)' }}
+                  disabled={isSubmitting}
+                  style={{ background: 'linear-gradient(135deg, #10B981, #059669)', opacity: isSubmitting ? 0.7 : 1 }}
                 >
-                  <Send size={18} /> Nộp Bài Khảo Sát
+                  <Send size={18} /> {isSubmitting ? 'Đang gửi lên hệ thống...' : 'Nộp Bài Khảo Sát'}
                 </button>
               )}
             </div>

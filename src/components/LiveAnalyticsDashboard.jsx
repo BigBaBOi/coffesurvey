@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import {
   getSavedResponses,
+  fetchCloudResponses,
   calculateAggregatedStats,
   subscribeRealtimeUpdates,
   clearAllResponses,
@@ -31,13 +32,15 @@ import {
   HeartHandshake,
   Coffee,
   PlusCircle,
-  RefreshCw
+  RefreshCw,
+  Globe2
 } from 'lucide-react';
 
 export default function LiveAnalyticsDashboard({ onOpenQR }) {
   const [responses, setResponses] = useState([]);
   const [stats, setStats] = useState(null);
   const [pulse, setPulse] = useState(false);
+  const [isSyncingCloud, setIsSyncingCloud] = useState(false);
   const [showClearModal, setShowClearModal] = useState(false);
   const [isExportingPDF, setIsExportingPDF] = useState(false);
   const [activeViewTab, setActiveViewTab] = useState('overview'); // 'overview' | 'radar' | 'heatmap' | 'loyalty' | 'table'
@@ -48,22 +51,55 @@ export default function LiveAnalyticsDashboard({ onOpenQR }) {
     setStats(calculateAggregatedStats(data));
   };
 
+  const syncCloud = async (showSpinner = false) => {
+    if (showSpinner) setIsSyncingCloud(true);
+    try {
+      const cloudData = await fetchCloudResponses();
+      if (Array.isArray(cloudData)) {
+        if (cloudData.length > responses.length && responses.length > 0) {
+          setPulse(true);
+          setTimeout(() => setPulse(false), 2500);
+        }
+        setResponses(cloudData);
+        setStats(calculateAggregatedStats(cloudData));
+      }
+    } catch (e) {
+      console.warn("Cloud sync error:", e);
+    } finally {
+      if (showSpinner) setIsSyncingCloud(false);
+    }
+  };
+
   useEffect(() => {
+    // 1. Initial local load
     loadData();
 
-    // Subscribe to cross-tab / real-time updates
+    // 2. Fetch latest from Cloud immediately on mount
+    syncCloud();
+
+    // 3. Subscribe to cross-tab / real-time updates
     const unsubscribe = subscribeRealtimeUpdates(() => {
       loadData();
       setPulse(true);
       setTimeout(() => setPulse(false), 2000);
     });
 
-    return () => unsubscribe();
+    // 4. Poll Cloud Database every 3.5 seconds so presenter's laptop auto-updates live from mobile scans!
+    const pollTimer = setInterval(() => {
+      syncCloud(false);
+    }, 3500);
+
+    return () => {
+      unsubscribe();
+      clearInterval(pollTimer);
+    };
   }, []);
 
-  const handleSimulateBatch = () => {
-    generateSampleResponses(12);
+  const handleSimulateBatch = async () => {
+    setIsSyncingCloud(true);
+    await generateSampleResponses(12);
     loadData();
+    setIsSyncingCloud(false);
     setPulse(true);
     setTimeout(() => setPulse(false), 2000);
   };
@@ -78,13 +114,13 @@ export default function LiveAnalyticsDashboard({ onOpenQR }) {
     setIsExportingPDF(true);
     await exportSurveyPDFBackup(responses, stats);
     setIsExportingPDF(false);
-    clearAllResponses();
+    await clearAllResponses();
     loadData();
     setShowClearModal(false);
   };
 
-  const handleClearDirectly = () => {
-    clearAllResponses();
+  const handleClearDirectly = async () => {
+    await clearAllResponses();
     loadData();
     setShowClearModal(false);
   };
@@ -153,6 +189,9 @@ export default function LiveAnalyticsDashboard({ onOpenQR }) {
             <h2 style={{ fontSize: '1.55rem', fontWeight: 900, color: '#002B80', letterSpacing: '-0.01em' }}>
               TỔNG HỢP & PHÂN TÍCH MARKETING REAL-TIME
             </h2>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', background: '#E0F2FE', color: '#0284C7', fontSize: '0.8rem', fontWeight: 800, padding: '0.25rem 0.65rem', borderRadius: '999px', border: '1px solid #BAE6FD' }}>
+              <Globe2 size={13} /> Cloud Real-Time
+            </span>
             {pulse && (
               <span style={{ background: '#10B981', color: '#FFF', fontSize: '0.82rem', fontWeight: 800, padding: '0.25rem 0.75rem', borderRadius: '999px', animation: 'pulseGlow 1s infinite' }}>
                 ⚡ Vừa có lượt nộp mới!
@@ -160,11 +199,21 @@ export default function LiveAnalyticsDashboard({ onOpenQR }) {
             )}
           </div>
           <p style={{ fontSize: '0.92rem', color: '#0055D4', fontWeight: 700, marginTop: '0.25rem' }}>
-            Hệ thống tự động đồng bộ thời gian thực từ mã QR Khảo sát Sinh viên VHU
+            Hệ thống tự động đồng bộ thời gian thực từ mã QR Khảo sát Sinh viên VHU qua Cloud
           </p>
         </div>
 
         <div style={{ display: 'flex', gap: '0.65rem', flexWrap: 'wrap', alignItems: 'center' }}>
+          <button
+            className="control-btn"
+            onClick={() => syncCloud(true)}
+            disabled={isSyncingCloud}
+            style={{ background: '#FFFFFF', color: '#0066FF', borderColor: '#0066FF', fontSize: '0.88rem', padding: '0.5rem 0.85rem' }}
+            title="Đồng bộ ngay dữ liệu mới nhất từ Cloud"
+          >
+            <RefreshCw size={16} className={isSyncingCloud ? 'animate-spin' : ''} style={{ animation: isSyncingCloud ? 'spin 1s linear infinite' : 'none' }} /> {isSyncingCloud ? 'Đang đồng bộ...' : 'Làm mới Cloud'}
+          </button>
+
           <button className="control-btn control-btn-primary" onClick={onOpenQR} style={{ fontSize: '0.9rem', padding: '0.5rem 1rem' }}>
             <QrCode size={18} /> Mở Mã QR Live
           </button>
