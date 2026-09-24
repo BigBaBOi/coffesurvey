@@ -95,30 +95,35 @@ export async function fetchCloudResponses() {
     if (!res.ok) return getSavedResponses();
 
     const json = await res.json();
+    if (json?.status !== 'success' || !Array.isArray(json?.data)) {
+      return getSavedResponses();
+    }
 
-    // Apps Script trả về { data: [ ...entries ] }
-    const cloudList = Array.isArray(json?.data) ? json.data
-      : Array.isArray(json) ? json
-      : null;
-
-    if (!cloudList || cloudList.length === 0) return getSavedResponses();
-
-    // Merge: ưu tiên cloud, tránh trùng theo studentName + mssv hoặc id
+    const cloudList = json.data;
     const localList = getSavedResponses();
     const mergedMap = new Map();
 
-    localList.forEach(item => {
+    // 1. Thêm dữ liệu từ Cloud (dữ liệu chính chủ từ Google Sheets)
+    cloudList.forEach(item => {
       const key = (item?.studentName && item?.mssv)
         ? `${item.studentName.trim().toLowerCase()}_${item.mssv.trim().toLowerCase()}`
         : item?.id;
       if (key) mergedMap.set(key, item);
     });
 
-    cloudList.forEach(item => {
+    // 2. Thêm dữ liệu local nộp gần đây (< 30 giây) chưa kịp sync
+    const NOW = Date.now();
+    localList.forEach(item => {
       const key = (item?.studentName && item?.mssv)
         ? `${item.studentName.trim().toLowerCase()}_${item.mssv.trim().toLowerCase()}`
         : item?.id;
-      if (key) mergedMap.set(key, item);
+
+      if (key && !mergedMap.has(key)) {
+        const itemTime = item.timestamp ? new Date(item.timestamp).getTime() : 0;
+        if (NOW - itemTime < 30000) { // Giữ lại nếu vừa mới nộp trong vòng 30 giây
+          mergedMap.set(key, item);
+        }
+      }
     });
 
     const merged = Array.from(mergedMap.values()).sort(
@@ -136,7 +141,7 @@ export async function fetchCloudResponses() {
 
     return merged;
   } catch (err) {
-    console.warn('[VHU] Cloud fetch (normal nếu chưa setup GET):', err.message);
+    console.warn('[VHU] Cloud fetch error:', err.message);
     return getSavedResponses();
   }
 }
