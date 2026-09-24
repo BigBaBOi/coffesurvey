@@ -103,25 +103,32 @@ export async function fetchCloudResponses() {
 
     if (!cloudList || cloudList.length === 0) return getSavedResponses();
 
-    // Merge: ưu tiên cloud, tránh trùng theo id
+    // Merge: ưu tiên cloud, tránh trùng theo studentName + mssv hoặc id
     const localList = getSavedResponses();
     const mergedMap = new Map();
+
     localList.forEach(item => {
-      if (item?.id) mergedMap.set(item.id, item);
+      const key = (item?.studentName && item?.mssv)
+        ? `${item.studentName.trim().toLowerCase()}_${item.mssv.trim().toLowerCase()}`
+        : item?.id;
+      if (key) mergedMap.set(key, item);
     });
+
     cloudList.forEach(item => {
-      if (item?.id) mergedMap.set(item.id, item);
+      const key = (item?.studentName && item?.mssv)
+        ? `${item.studentName.trim().toLowerCase()}_${item.mssv.trim().toLowerCase()}`
+        : item?.id;
+      if (key) mergedMap.set(key, item);
     });
 
     const merged = Array.from(mergedMap.values()).sort(
       (a, b) => new Date(b.timestamp) - new Date(a.timestamp)
     );
 
-    const localCount = localList.length;
     persistLocal(merged);
 
-    // Phát sự kiện cập nhật nếu có dữ liệu mới
-    if (merged.length !== localCount && typeof window !== 'undefined') {
+    // Phát sự kiện cập nhật giao diện
+    if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent(EVENT_NAME, {
         detail: { type: 'CLOUD_SYNCED', count: merged.length }
       }));
@@ -129,7 +136,6 @@ export async function fetchCloudResponses() {
 
     return merged;
   } catch (err) {
-    // Lỗi thường gặp: CORS khi Apps Script chưa bật doGet, trả về local
     console.warn('[VHU] Cloud fetch (normal nếu chưa setup GET):', err.message);
     return getSavedResponses();
   }
@@ -257,13 +263,13 @@ export async function generateSampleResponses(count = 12) {
     { name: 'Hoàng Minh Châu', mssv: '241A040823' },
   ];
 
-  const brands     = ['Highlands Coffee', 'Phúc Long', 'The Coffee House', 'Katinat', 'Starbucks', 'Cà phê vỉa hè'];
-  const spendings  = ['Dưới 30.000 đồng', 'Từ 30.000 – dưới 50.000 đồng', 'Từ 50.000 – dưới 70.000 đồng', 'Trên 70.000 đồng'];
+  const brands     = ['Highlands Coffee', 'Phúc Long', 'The Coffee House', 'Katinat', 'Starbucks', 'Quán cà phê độc lập/cà phê vỉa hè/cà phê gần trường'];
+  const spendings  = ['Dưới 30.000 đồng', 'Từ 30.000 – dưới 50.000 đồng', 'Từ 50.000 – dưới 70.000 đồng', 'Từ 70.000 – dưới 100.000 đồng'];
   const freqs      = ['Hằng ngày', '3–5 lần/tuần', '1–2 lần/tuần', 'Ít hơn 1 lần/tuần'];
   const loyalties  = ['Thường chọn thương hiệu quen thuộc', 'Thích thử thương hiệu mới', 'Linh hoạt tùy theo bạn bè'];
-  const reasons    = ['Giá cao hơn', 'Chất lượng cà phê giảm', 'Không gian quán không phù hợp', 'Thái độ phục vụ kém', 'Thương hiệu đối thủ có khuyến mãi tốt hơn'];
-  const channels   = ['Mạng xã hội (Facebook, TikTok...)', 'Bạn bè, người thân giới thiệu', 'Đi ngang qua thấy quán', 'Biển quảng cáo, KOLs'];
-  const factors    = ['Giá cả', 'Chất lượng cà phê', 'Hương vị', 'Mức độ nổi tiếng thương hiệu', 'Không gian quán', 'Vị trí cửa hàng', 'Chất lượng phục vụ', 'Khuyến mãi / Ưu đãi', 'Sự đa dạng menu'];
+  const reasons    = ['Giá tăng cao', 'Chất lượng phục vụ không tốt', 'Chất lượng hoặc hương vị không còn phù hợp', 'Không gian quán không phù hợp', 'Thương hiệu đối thủ có khuyến mãi tốt hơn'];
+  const channels   = ['Mạng xã hội (Facebook, TikTok, Instagram,...)', 'Bạn bè/người thân giới thiệu', 'Nhìn thấy cửa hàng khi đi trên đường', 'KOLs/Influencer/người nổi tiếng'];
+  const factors    = ['Giá cả', 'Chất lượng cà phê', 'Hương vị', 'Mức độ nổi tiếng của thương hiệu', 'Không gian quán', 'Vị trí cửa hàng', 'Chất lượng phục vụ', 'Khuyến mãi/ưu đãi', 'Sự đa dạng của menu'];
 
   const selectedCount = Math.min(count, sampleStudents.length);
   const generated = [];
@@ -327,9 +333,15 @@ export async function generateSampleResponses(count = 12) {
 export function calculateAggregatedStats(responses) {
   const totalCount = Array.isArray(responses) ? responses.length : 0;
   const emptyLikert = {
-    'Giá cả': '0.0', 'Chất lượng cà phê': '0.0', 'Hương vị': '0.0',
-    'Không gian quán': '0.0', 'Vị trí cửa hàng': '0.0', 'Chất lượng phục vụ': '0.0',
-    'Khuyến mãi / Ưu đãi': '0.0', 'Mức độ nổi tiếng thương hiệu': '0.0', 'Sự đa dạng menu': '0.0',
+    'Giá cả': '0.0',
+    'Chất lượng cà phê': '0.0',
+    'Hương vị': '0.0',
+    'Mức độ nổi tiếng của thương hiệu': '0.0',
+    'Không gian quán': '0.0',
+    'Vị trí cửa hàng': '0.0',
+    'Chất lượng phục vụ': '0.0',
+    'Khuyến mãi/ưu đãi': '0.0',
+    'Sự đa dạng của menu': '0.0',
   };
 
   if (totalCount === 0) {
@@ -349,41 +361,75 @@ export function calculateAggregatedStats(responses) {
     const a = r?.answers;
     if (!a) return;
 
-    // Q5 — Thương hiệu
-    if (a[5]) brandCounts[a[5]] = (brandCounts[a[5]] || 0) + 1;
+    // Q5 — Thương hiệu chính
+    if (a[5]) {
+      let b = a[5].trim();
+      if (b.includes('vỉa hè') || b.includes('độc lập')) b = 'Quán cà phê độc lập/cà phê vỉa hè/cà phê gần trường';
+      brandCounts[b] = (brandCounts[b] || 0) + 1;
 
-    // Q3 — Chi tiêu
-    if (a[3]) {
-      spendingCounts[a[3]] = (spendingCounts[a[3]] || 0) + 1;
-      if (a[5]) {
-        if (!crossTabSpendingBrand[a[3]]) crossTabSpendingBrand[a[3]] = {};
-        crossTabSpendingBrand[a[3]][a[5]] = (crossTabSpendingBrand[a[3]][a[5]] || 0) + 1;
+      // Q3 — Chi tiêu
+      if (a[3]) {
+        const sp = a[3].trim();
+        spendingCounts[sp] = (spendingCounts[sp] || 0) + 1;
+        if (!crossTabSpendingBrand[sp]) crossTabSpendingBrand[sp] = {};
+        crossTabSpendingBrand[sp][b] = (crossTabSpendingBrand[sp][b] || 0) + 1;
       }
+    } else if (a[3]) {
+      const sp = a[3].trim();
+      spendingCounts[sp] = (spendingCounts[sp] || 0) + 1;
     }
 
     // Q1 — Tần suất
-    if (a[1]) frequencyCounts[a[1]] = (frequencyCounts[a[1]] || 0) + 1;
+    if (a[1]) {
+      const f = a[1].trim();
+      frequencyCounts[f] = (frequencyCounts[f] || 0) + 1;
+    }
 
-    // Q8 — Likert
+    // Q8 — Likert Thang đo 1-5 (Chuẩn hóa tên yếu tố)
     if (a[8] && typeof a[8] === 'object') {
       Object.entries(a[8]).forEach(([factor, score]) => {
-        likertSums[factor]  = (likertSums[factor]  || 0) + Number(score);
-        likertCounts[factor] = (likertCounts[factor] || 0) + 1;
+        let f = factor.trim();
+        if (f.includes('nổi tiếng')) f = 'Mức độ nổi tiếng của thương hiệu';
+        else if (f.includes('Khuyến mãi') || f.includes('ưu đãi')) f = 'Khuyến mãi/ưu đãi';
+        else if (f.includes('đa dạng')) f = 'Sự đa dạng của menu';
+
+        likertSums[f]   = (likertSums[f]   || 0) + Number(score);
+        likertCounts[f] = (likertCounts[f] || 0) + 1;
       });
     }
 
-    // Q6 — Kênh tiếp cận
+    // Q6 — Kênh tiếp cận (Chuẩn hóa tên kênh)
     if (Array.isArray(a[6])) {
-      a[6].forEach(ch => { channelReach[ch] = (channelReach[ch] || 0) + 1; });
+      a[6].forEach(ch => {
+        let c = ch.trim();
+        if (c.includes('Mạng xã hội')) c = 'Mạng xã hội (Facebook, TikTok, Instagram,...)';
+        else if (c.includes('Bạn bè')) c = 'Bạn bè/người thân giới thiệu';
+        else if (c.includes('đi trên đường')) c = 'Nhìn thấy cửa hàng khi đi trên đường';
+        else if (c.includes('KOLs') || c.includes('người nổi tiếng')) c = 'KOLs/Influencer/người nổi tiếng';
+        
+        channelReach[c] = (channelReach[c] || 0) + 1;
+      });
     }
 
-    // Q11 — Lý do chuyển đổi
+    // Q11 — Lý do chuyển đổi (Chuẩn hóa tên lý do)
     if (Array.isArray(a[11])) {
-      a[11].forEach(r => { switchReasons[r] = (switchReasons[r] || 0) + 1; });
+      a[11].forEach(r => {
+        let reason = r.trim();
+        if (reason.includes('phục vụ')) reason = 'Chất lượng phục vụ không tốt';
+        else if (reason.includes('Giá')) reason = 'Giá tăng cao';
+        else if (reason.includes('chất lượng') || reason.includes('hương vị')) reason = 'Chất lượng hoặc hương vị không còn phù hợp';
+        else if (reason.includes('Không gian')) reason = 'Không gian quán không phù hợp';
+        else if (reason.includes('đối thủ') || reason.includes('khuyến mãi')) reason = 'Thương hiệu đối thủ có khuyến mãi tốt hơn';
+
+        switchReasons[reason] = (switchReasons[reason] || 0) + 1;
+      });
     }
 
     // Q12 — Loyalty
-    if (a[12]) loyaltyDistribution[a[12]] = (loyaltyDistribution[a[12]] || 0) + 1;
+    if (a[12]) {
+      const l = a[12].trim();
+      loyaltyDistribution[l] = (loyaltyDistribution[l] || 0) + 1;
+    }
   });
 
   const defaultFactors = Object.keys(emptyLikert);
