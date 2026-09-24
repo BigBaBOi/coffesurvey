@@ -1,9 +1,12 @@
 import React, { useState } from 'react';
 import { SURVEY_QUESTIONS } from '../data/surveyData';
+import { saveStudentResponse } from '../utils/storage';
 import confetti from 'canvas-confetti';
-import { CheckCircle, HelpCircle, Send, RotateCcw, ChevronLeft, ChevronRight, Award } from 'lucide-react';
+import { CheckCircle, HelpCircle, Send, RotateCcw, ChevronLeft, ChevronRight, Award, User, IdCard, BarChart2 } from 'lucide-react';
 
-export default function InteractiveSurvey({ isDark }) {
+export default function InteractiveSurvey({ isDark, onNavigateToAnalytics }) {
+  const [studentName, setStudentName] = useState('Sinh viên VHU');
+  const [mssv, setMssv] = useState('');
   const [currentStep, setCurrentStep] = useState(0);
   const [answers, setAnswers] = useState({});
   const [isSubmitted, setIsSubmitted] = useState(false);
@@ -44,8 +47,14 @@ export default function InteractiveSurvey({ isDark }) {
   };
 
   const handleSubmit = (e) => {
-    e.preventDefault();
+    if (e && e.preventDefault) e.preventDefault();
+    const studentMssv = mssv.trim() || ('251A' + Math.floor(100000 + Math.random() * 900000));
+    const name = studentName.trim() || 'Sinh viên VHU';
+    
+    // Save to real-time storage so it updates the Live Analytics Dashboard!
+    saveStudentResponse(name, studentMssv, answers);
     setIsSubmitted(true);
+    
     confetti({
       particleCount: 120,
       spread: 80,

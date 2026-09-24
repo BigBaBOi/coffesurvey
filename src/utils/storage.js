@@ -2,6 +2,7 @@
 
 const STORAGE_KEY = 'vhu_survey_responses_v1';
 const CHANNEL_NAME = 'vhu_survey_realtime';
+const EVENT_NAME = 'vhu_survey_updated';
 
 // Default clean storage (0 initial demo responses)
 const INITIAL_SEED_RESPONSES = [];
@@ -25,10 +26,10 @@ export function getSavedResponses() {
 export function saveStudentResponse(studentName, mssv, answers) {
   const responses = getSavedResponses();
   const newEntry = {
-    id: 'res_' + Date.now(),
+    id: 'res_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4),
     timestamp: new Date().toISOString(),
-    studentName: studentName.trim(),
-    mssv: mssv.trim(),
+    studentName: (studentName || 'Sinh viên VHU').trim(),
+    mssv: (mssv || '251A' + Math.floor(100000 + Math.random() * 900000)).trim(),
     answers
   };
 
@@ -37,6 +38,11 @@ export function saveStudentResponse(studentName, mssv, answers) {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
   } catch (e) {
     console.error("Error writing to localStorage:", e);
+  }
+
+  // Trigger local in-tab event
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent(EVENT_NAME, { detail: { type: 'NEW_RESPONSE', data: newEntry } }));
   }
 
   // Broadcast via BroadcastChannel if supported
@@ -60,6 +66,11 @@ export function clearAllResponses() {
   } catch (e) {
     console.error("Error clearing localStorage:", e);
   }
+
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent(EVENT_NAME, { detail: { type: 'CLEAR_ALL_DATA' } }));
+  }
+
   if (typeof BroadcastChannel !== 'undefined') {
     try {
       const channel = new BroadcastChannel(CHANNEL_NAME);
@@ -72,31 +83,47 @@ export function clearAllResponses() {
 
 // Reset data back to clean empty state
 export function resetResponses() {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify([]));
-  } catch (e) {
-    console.error("Error resetting localStorage:", e);
-  }
-  if (typeof BroadcastChannel !== 'undefined') {
-    try {
-      const channel = new BroadcastChannel(CHANNEL_NAME);
-      channel.postMessage({ type: 'CLEAR_ALL_DATA' });
-      channel.close();
-    } catch (err) {}
-  }
-  return [];
+  return clearAllResponses();
 }
 
-// Listen to real-time broadcasts
+// Listen to real-time broadcasts across tabs and current tab
 export function subscribeRealtimeUpdates(callback) {
+  let channel = null;
+
+  // 1. BroadcastChannel listener
   if (typeof BroadcastChannel !== 'undefined') {
-    const channel = new BroadcastChannel(CHANNEL_NAME);
-    channel.onmessage = (event) => {
-      callback(event.data);
-    };
-    return () => channel.close();
+    try {
+      channel = new BroadcastChannel(CHANNEL_NAME);
+      channel.onmessage = (event) => {
+        callback(event.data);
+      };
+    } catch (e) {}
   }
-  return () => {};
+
+  // 2. Storage event listener (other tabs on same origin)
+  const handleStorage = (event) => {
+    if (event.key === STORAGE_KEY) {
+      callback({ type: 'STORAGE_CHANGED' });
+    }
+  };
+
+  // 3. Custom in-tab event listener (same tab)
+  const handleCustomEvent = (event) => {
+    callback(event.detail || { type: 'LOCAL_UPDATE' });
+  };
+
+  if (typeof window !== 'undefined') {
+    window.addEventListener('storage', handleStorage);
+    window.addEventListener(EVENT_NAME, handleCustomEvent);
+  }
+
+  return () => {
+    if (channel) channel.close();
+    if (typeof window !== 'undefined') {
+      window.removeEventListener('storage', handleStorage);
+      window.removeEventListener(EVENT_NAME, handleCustomEvent);
+    }
+  };
 }
 
 // Generate realistic demo student survey responses for live testing/presentation
@@ -168,6 +195,10 @@ export function generateSampleResponses(count = 12) {
     const merged = [...generated, ...current];
     localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
   } catch (e) {}
+
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent(EVENT_NAME, { detail: { type: 'BATCH_ADDED' } }));
+  }
 
   if (typeof BroadcastChannel !== 'undefined') {
     try {
