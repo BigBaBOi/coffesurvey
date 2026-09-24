@@ -8,7 +8,7 @@ const CHANNEL_NAME = 'vhu_survey_realtime';
 const EVENT_NAME = 'vhu_survey_updated';
 
 // Google Apps Script Web App URL — thay bằng URL của bạn nếu cần
-const GOOGLE_SHEET_API = 'https://script.google.com/macros/s/AKfycbx-BlYPN96Z9IjskeQI3jQfCYMl3FQEIfXN5-S8O1uTrcZ7eKWl0MiFaU6Zdg-fC27Ppw/exec';
+const GOOGLE_SHEET_API = 'https://script.google.com/macros/s/AKfycbzOYD2e5U1zsxOV9lQ60B-QLJmYtfWNxeTui9-QqB-sy-75pEOSbOvoC3LxkNlLRtacoQ/exec';
 
 // Memory fallback nếu localStorage không khả dụng (trình duyệt private)
 let memoryStore = null;
