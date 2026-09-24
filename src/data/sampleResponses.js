@@ -1,0 +1,109 @@
+export const SAMPLE_RESPONSES = [
+  {
+    id: "resp_1",
+    submittedAt: "2026-09-24T08:12:00Z",
+    answers: {
+      1: "3–5 lần/tuần",
+      2: ["Mua trực tiếp tại cửa hàng/quán cà phê", "Mua mang đi (take-away)"],
+      3: "Từ 30.000 – dưới 50.000 đồng",
+      4: ["The Coffee House", "Phúc Long"],
+      5: "The Coffee House",
+      6: ["Mạng xã hội (Facebook, TikTok, Instagram,...)", "Bạn bè/người thân giới thiệu"],
+      7: ["Giá cả", "Không gian quán", "Chất lượng phục vụ"],
+      8: { "Giá cả": 4, "Chất lượng cà phê": 5, "Hương vị": 5 },
+      9: "Ảnh hưởng nhiều",
+      10: "Không gian ấm cúng và đồ uống ổn định",
+      11: ["Thương hiệu khác có khuyến mãi hấp dẫn hơn"],
+      12: "Tùy vào từng thời điểm",
+      13: 4,
+      14: "21–23 tuổi",
+      15: "2 – dưới 4 triệu"
+    }
+  },
+  {
+    id: "resp_2",
+    submittedAt: "2026-09-24T08:18:30Z",
+    answers: {
+      1: "Hằng ngày",
+      2: ["Đặt qua ứng dụng giao đồ ăn (GrabFood, ShopeeFood,...)", "Mua mang đi (take-away)"],
+      3: "Từ 50.000 – dưới 70.000 đồng",
+      4: ["Starbucks"],
+      5: "Starbucks",
+      6: ["Quảng cáo", "Mạng xã hội (Facebook, TikTok, Instagram,...)"] ,
+      7: ["Chất lượng cà phê", "Hương vị", "Mức độ nổi tiếng của thương hiệu"],
+      8: { "Giá cả": 2, "Chất lượng cà phê": 5, "Không gian quán": 4 },
+      9: "Bình thường",
+      10: "Chất lượng đồ uống ổn định và nhân viên thân thiện",
+      11: ["Thương hiệu khác có giá tốt hơn"],
+      12: "Thường thử thương hiệu mới",
+      13: 5,
+      14: "24–26 tuổi",
+      15: "Từ 4 – dưới 6 triệu"
+    }
+  },
+  {
+    id: "resp_3",
+    submittedAt: "2026-09-24T09:05:10Z",
+    answers: {
+      1: "1–2 lần/tuần",
+      2: ["Mua trực tiếp tại cửa hàng/quán cà phê"],
+      3: "Dưới 30.000 đồng",
+      4: ["Quán cà phê độc lập/cà phê vỉa hè/cà phê gần trường"],
+      5: "Quán cà phê độc lập/cà phê vỉa hè/cà phê gần trường",
+      6: ["Bạn bè/người thân giới thiệu"],
+      7: ["Giá cả", "Vị trí cửa hàng"],
+      8: { "Giá cả": 5, "Vị trí cửa hàng": 4, "Sự đa dạng của menu": 3 },
+      9: "Ảnh hưởng rất nhiều",
+      10: "Giá rẻ và vị phù hợp",
+      11: ["Giá cao hơn", "Khuyến mãi hấp dẫn hơn"],
+      12: "Luôn chọn thương hiệu quen thuộc",
+      13: 2,
+      14: "18–20 tuổi",
+      15: "Dưới 2 triệu"
+    }
+  },
+  {
+    id: "resp_4",
+    submittedAt: "2026-09-24T10:20:45Z",
+    answers: {
+      1: "Ít hơn 1 lần/tuần",
+      2: ["Mua mang đi (take-away)", "Khác"],
+      3: "Từ 30.000 – dưới 50.000 đồng",
+      4: ["Highlands Coffee", "Phúc Long"],
+      5: "Phúc Long",
+      6: ["Mạng xã hội (Facebook, TikTok, Instagram,...)", "Chương trình khuyến mãi"],
+      7: ["Không gian quán", "Chất lượng phục vụ"],
+      8: { "Không gian quán": 5, "Chất lượng phục vụ": 4, "Giá cả": 3 },
+      9: "Ít ảnh hưởng",
+      10: "Không gian thích hợp để học nhóm",
+      11: ["Không gian không phù hợp", "Chất lượng phục vụ không tốt"],
+      12: "Tùy vào từng thời điểm",
+      13: 3,
+      14: "21–23 tuổi",
+      15: "2 – dưới 4 triệu"
+    }
+  },
+  {
+    id: "resp_5",
+    submittedAt: "2026-09-24T11:02:05Z",
+    answers: {
+      1: "Hiếm khi",
+      2: ["Mua tại cửa hàng tiện lợi/siêu thị"],
+      3: "Dưới 30.000 đồng",
+      4: ["Katinat", "Cộng Cà Phê"],
+      5: "Katinat",
+      6: ["Bạn bè/người thân giới thiệu"],
+      7: ["Sự đa dạng của menu", "Khuyến mãi/ưu đãi"],
+      8: { "Sự đa dạng của menu": 4, "Khuyến mãi/ưu đãi": 5 },
+      9: "Hoàn toàn không ảnh hưởng",
+      10: "Ưu đãi thường xuyên và đồ uống giá trị",
+      11: ["Thương hiệu khác có khuyến mãi hấp dẫn hơn"],
+      12: "Luôn thích thử thương hiệu mới",
+      13: 3,
+      14: "Trên 26 tuổi",
+      15: "Từ 6 – dưới 8 triệu"
+    }
+  }
+];
+
+export default SAMPLE_RESPONSES;

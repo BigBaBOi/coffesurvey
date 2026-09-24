@@ -1,45 +1,22 @@
-// Helper module for real-time survey data management & cross-device cloud sync
+// ============================================================
+// VHU Survey Storage & Google Sheets Sync
+// Dữ liệu lưu vào localStorage (local) + Google Sheets (cloud)
+// ============================================================
 
 const STORAGE_KEY = 'vhu_survey_responses_v1';
-const CLOUD_URL_KEY = 'vhu_cloud_sync_endpoint_url_v1';
 const CHANNEL_NAME = 'vhu_survey_realtime';
 const EVENT_NAME = 'vhu_survey_updated';
 
-// Default clean storage (0 initial demo responses)
-const INITIAL_SEED_RESPONSES = [];
+// Google Apps Script Web App URL — thay bằng URL của bạn nếu cần
+const GOOGLE_SHEET_API = 'https://script.google.com/macros/s/AKfycbx-BlYPN96Z9IjskeQI3jQfCYMl3FQEIfXN5-S8O1uTrcZ7eKWl0MiFaU6Zdg-fC27Ppw/exec';
 
-// Memory fallback if localStorage is unavailable
+// Memory fallback nếu localStorage không khả dụng (trình duyệt private)
 let memoryStore = null;
 
-// Get configured Cloud Sync URL
-export function getCloudSyncUrl() {
-  if (typeof localStorage !== 'undefined') {
-    try {
-      const saved = localStorage.getItem(CLOUD_URL_KEY);
-      if (saved && saved.trim()) return saved.trim();
-    } catch (e) {}
-  }
-  return '';
-}
+// ─────────────────────────────────────────────────────────────
+// LOCAL STORAGE HELPERS
+// ─────────────────────────────────────────────────────────────
 
-// Set or update Cloud Sync URL
-export function setCloudSyncUrl(url) {
-  const cleanUrl = (url || '').trim();
-  if (typeof localStorage !== 'undefined') {
-    try {
-      if (cleanUrl) {
-        localStorage.setItem(CLOUD_URL_KEY, cleanUrl);
-      } else {
-        localStorage.removeItem(CLOUD_URL_KEY);
-      }
-    } catch (e) {}
-  }
-  if (typeof window !== 'undefined') {
-    window.dispatchEvent(new CustomEvent(EVENT_NAME, { detail: { type: 'CLOUD_CONFIG_CHANGED' } }));
-  }
-}
-
-// Initialize / Read LocalStorage
 export function getSavedResponses() {
   if (typeof localStorage === 'undefined') {
     return memoryStore || [];
@@ -47,304 +24,284 @@ export function getSavedResponses() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw === null) {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(INITIAL_SEED_RESPONSES));
-      return INITIAL_SEED_RESPONSES;
+      localStorage.setItem(STORAGE_KEY, JSON.stringify([]));
+      return [];
     }
     return JSON.parse(raw);
   } catch (e) {
-    console.error("Error reading responses from localStorage:", e);
+    console.error('[VHU] Lỗi đọc localStorage:', e);
     return memoryStore || [];
   }
 }
 
-// Fetch responses from global Cloud database and merge with local data
+function persistLocal(list) {
+  memoryStore = list;
+  if (typeof localStorage !== 'undefined') {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
+    } catch (e) {
+      console.error('[VHU] Lỗi ghi localStorage:', e);
+    }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// GOOGLE SHEETS SYNC
+// Dùng mode: 'no-cors' vì Apps Script không trả CORS header
+// đúng chuẩn khi bị gọi từ domain khác.
+// Lưu ý: no-cors = không đọc được response, nhưng request VẪN GỬI ĐI.
+// ─────────────────────────────────────────────────────────────
+
+async function pushToGoogleSheets(entry) {
+  if (!GOOGLE_SHEET_API) return;
+  try {
+    await fetch(GOOGLE_SHEET_API, {
+      method: 'POST',
+      mode: 'no-cors',           // ← Bắt buộc với Apps Script từ browser
+      headers: {
+        'Content-Type': 'text/plain', // no-cors chỉ cho phép simple headers
+      },
+      body: JSON.stringify({
+        studentName: entry.studentName,
+        mssv:        entry.mssv,
+        timestamp:   entry.timestamp,
+        answers:     entry.answers,
+      }),
+    });
+    console.log('[VHU] ✅ Đã gửi lên Google Sheets:', entry.studentName);
+  } catch (err) {
+    console.warn('[VHU] ⚠️ Lỗi gửi Google Sheets:', err.message);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// FETCH FROM GOOGLE SHEETS (để dashboard polling)
+// Apps Script cần hỗ trợ GET và trả JSON với CORS header.
+// Nếu chưa setup GET, hàm này chỉ trả dữ liệu local.
+// ─────────────────────────────────────────────────────────────
+
 export async function fetchCloudResponses() {
-  const cloudUrl = getCloudSyncUrl();
-  if (!cloudUrl) return getSavedResponses();
+  if (!GOOGLE_SHEET_API) return getSavedResponses();
 
   try {
-    const isFirebase = cloudUrl.includes('firebasedatabase.app') || cloudUrl.includes('firebaseio.com');
-    const fetchUrl = isFirebase && !cloudUrl.endsWith('.json') ? `${cloudUrl.replace(/\/$/, '')}/surveys.json` : cloudUrl;
-
-    const res = await fetch(fetchUrl, {
+    // GET request để lấy tất cả responses từ Sheet
+    const res = await fetch(`${GOOGLE_SHEET_API}?action=getAll`, {
       method: 'GET',
-      headers: { 'Accept': 'application/json' },
-      cache: 'no-store'
+      cache: 'no-store',
     });
 
     if (!res.ok) return getSavedResponses();
+
     const json = await res.json();
-    
-    let cloudList = [];
-    if (Array.isArray(json)) {
-      cloudList = json;
-    } else if (json && typeof json === 'object') {
-      if (Array.isArray(json.data?.surveyList)) {
-        cloudList = json.data.surveyList;
-      } else if (Array.isArray(json.surveys)) {
-        cloudList = json.surveys;
-      } else {
-        // Firebase object format: { "-Nxxxx": { ...entry }, "-Nyyyy": { ...entry } }
-        cloudList = Object.entries(json).map(([k, v]) => ({
-          ...v,
-          id: v.id || k
-        }));
-      }
+
+    // Apps Script trả về { data: [ ...entries ] }
+    const cloudList = Array.isArray(json?.data) ? json.data
+      : Array.isArray(json) ? json
+      : null;
+
+    if (!cloudList || cloudList.length === 0) return getSavedResponses();
+
+    // Merge: ưu tiên cloud, tránh trùng theo id
+    const localList = getSavedResponses();
+    const mergedMap = new Map();
+    localList.forEach(item => {
+      if (item?.id) mergedMap.set(item.id, item);
+    });
+    cloudList.forEach(item => {
+      if (item?.id) mergedMap.set(item.id, item);
+    });
+
+    const merged = Array.from(mergedMap.values()).sort(
+      (a, b) => new Date(b.timestamp) - new Date(a.timestamp)
+    );
+
+    const localCount = localList.length;
+    persistLocal(merged);
+
+    // Phát sự kiện cập nhật nếu có dữ liệu mới
+    if (merged.length !== localCount && typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent(EVENT_NAME, {
+        detail: { type: 'CLOUD_SYNCED', count: merged.length }
+      }));
     }
 
-    if (Array.isArray(cloudList) && cloudList.length > 0) {
-      const localList = getSavedResponses();
-      const mergedMap = new Map();
-      
-      localList.forEach(item => {
-        if (item && (item.id || item.timestamp)) {
-          mergedMap.set(item.id || `${item.studentName}_${item.mssv}_${item.timestamp}`, item);
-        }
-      });
-
-      cloudList.forEach(item => {
-        if (item && (item.id || item.timestamp)) {
-          mergedMap.set(item.id || `${item.studentName}_${item.mssv}_${item.timestamp}`, item);
-        }
-      });
-
-      const merged = Array.from(mergedMap.values()).sort(
-        (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
-      );
-
-      memoryStore = merged;
-      if (typeof localStorage !== 'undefined') {
-        try { localStorage.setItem(STORAGE_KEY, JSON.stringify(merged)); } catch (e) {}
-      }
-
-      if (merged.length !== localList.length && typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent(EVENT_NAME, { detail: { type: 'CLOUD_SYNCED', count: merged.length } }));
-      }
-
-      return merged;
-    }
+    return merged;
   } catch (err) {
-    console.warn("Cloud sync network notice:", err.message);
+    // Lỗi thường gặp: CORS khi Apps Script chưa bật doGet, trả về local
+    console.warn('[VHU] Cloud fetch (normal nếu chưa setup GET):', err.message);
+    return getSavedResponses();
   }
-  return getSavedResponses();
 }
 
-// Save a new student response & sync both locally and to Cloud
+// ─────────────────────────────────────────────────────────────
+// SAVE STUDENT RESPONSE
+// ─────────────────────────────────────────────────────────────
+
 export async function saveStudentResponse(studentName, mssv, answers) {
   const responses = getSavedResponses();
+
   const newEntry = {
-    id: 'res_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6),
-    timestamp: new Date().toISOString(),
+    id:          'res_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6),
+    timestamp:   new Date().toISOString(),
     studentName: (studentName || 'Sinh viên VHU').trim(),
-    mssv: (mssv || '251A' + Math.floor(100000 + Math.random() * 900000)).trim(),
-    answers
+    mssv:        (mssv || '').trim(),
+    answers,
   };
 
   const updated = [newEntry, ...responses];
-  memoryStore = updated;
-  
-  // 1. Instant local persistence
-  if (typeof localStorage !== 'undefined') {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
-    } catch (e) {
-      console.error("Error writing to localStorage:", e);
-    }
-  }
+  persistLocal(updated);
 
-  // 2. Broadcast immediately in current tab & across tabs
+  // Thông báo trong tab hiện tại
   if (typeof window !== 'undefined') {
-    window.dispatchEvent(new CustomEvent(EVENT_NAME, { detail: { type: 'NEW_RESPONSE', data: newEntry } }));
+    window.dispatchEvent(new CustomEvent(EVENT_NAME, {
+      detail: { type: 'NEW_RESPONSE', data: newEntry }
+    }));
   }
 
+  // Thông báo sang các tab khác cùng origin
   if (typeof BroadcastChannel !== 'undefined') {
     try {
-      const channel = new BroadcastChannel(CHANNEL_NAME);
-      channel.postMessage({ type: 'NEW_RESPONSE', data: newEntry });
-      channel.close();
-    } catch (err) {}
+      const ch = new BroadcastChannel(CHANNEL_NAME);
+      ch.postMessage({ type: 'NEW_RESPONSE', data: newEntry });
+      ch.close();
+    } catch (_) {}
   }
 
-  // 3. Sync to Cloud endpoint if configured
-  const cloudUrl = getCloudSyncUrl();
-  if (cloudUrl) {
-    try {
-      const isFirebase = cloudUrl.includes('firebasedatabase.app') || cloudUrl.includes('firebaseio.com');
-      const postUrl = isFirebase && !cloudUrl.endsWith('.json') ? `${cloudUrl.replace(/\/$/, '')}/surveys.json` : cloudUrl;
-
-      await fetch(postUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newEntry)
-      });
-    } catch (cloudErr) {
-      console.warn("Cloud push notice:", cloudErr);
-    }
-  }
+  // Đẩy lên Google Sheets (không chặn UI — fire and forget)
+  pushToGoogleSheets(newEntry);
 
   return newEntry;
 }
 
-// Completely wipe all survey responses (Local + Cloud)
+// ─────────────────────────────────────────────────────────────
+// CLEAR ALL RESPONSES
+// ─────────────────────────────────────────────────────────────
+
 export async function clearAllResponses() {
-  memoryStore = [];
-  if (typeof localStorage !== 'undefined') {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify([]));
-    } catch (e) {
-      console.error("Error clearing localStorage:", e);
-    }
-  }
+  persistLocal([]);
 
   if (typeof window !== 'undefined') {
-    window.dispatchEvent(new CustomEvent(EVENT_NAME, { detail: { type: 'CLEAR_ALL_DATA' } }));
+    window.dispatchEvent(new CustomEvent(EVENT_NAME, {
+      detail: { type: 'CLEAR_ALL_DATA' }
+    }));
   }
 
   if (typeof BroadcastChannel !== 'undefined') {
     try {
-      const channel = new BroadcastChannel(CHANNEL_NAME);
-      channel.postMessage({ type: 'CLEAR_ALL_DATA' });
-      channel.close();
-    } catch (err) {}
-  }
-
-  const cloudUrl = getCloudSyncUrl();
-  if (cloudUrl) {
-    try {
-      const isFirebase = cloudUrl.includes('firebasedatabase.app') || cloudUrl.includes('firebaseio.com');
-      const deleteUrl = isFirebase && !cloudUrl.endsWith('.json') ? `${cloudUrl.replace(/\/$/, '')}/surveys.json` : cloudUrl;
-      
-      if (isFirebase) {
-        await fetch(deleteUrl, { method: 'DELETE' });
-      } else {
-        await fetch(deleteUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'clear' })
-        });
-      }
-    } catch (e) {}
+      const ch = new BroadcastChannel(CHANNEL_NAME);
+      ch.postMessage({ type: 'CLEAR_ALL_DATA' });
+      ch.close();
+    } catch (_) {}
   }
 
   return [];
 }
 
-// Reset data back to clean empty state
 export function resetResponses() {
   return clearAllResponses();
 }
 
-// Listen to real-time broadcasts across tabs, current tab & cloud
+// ─────────────────────────────────────────────────────────────
+// REALTIME SUBSCRIPTION (cross-tab + same-tab)
+// ─────────────────────────────────────────────────────────────
+
 export function subscribeRealtimeUpdates(callback) {
   let channel = null;
 
-  // 1. BroadcastChannel listener
   if (typeof BroadcastChannel !== 'undefined') {
     try {
       channel = new BroadcastChannel(CHANNEL_NAME);
-      channel.onmessage = (event) => {
-        callback(event.data);
-      };
-    } catch (e) {}
+      channel.onmessage = (e) => callback(e.data);
+    } catch (_) {}
   }
 
-  // 2. Storage event listener (other tabs on same origin)
-  const handleStorage = (event) => {
-    if (event.key === STORAGE_KEY || event.key === CLOUD_URL_KEY) {
-      callback({ type: 'STORAGE_CHANGED' });
-    }
+  const handleStorage = (e) => {
+    if (e.key === STORAGE_KEY) callback({ type: 'STORAGE_CHANGED' });
   };
 
-  // 3. Custom in-tab event listener (same tab / cloud sync)
-  const handleCustomEvent = (event) => {
-    callback(event.detail || { type: 'LOCAL_UPDATE' });
-  };
+  const handleCustom = (e) => callback(e.detail || { type: 'LOCAL_UPDATE' });
 
   if (typeof window !== 'undefined') {
     window.addEventListener('storage', handleStorage);
-    window.addEventListener(EVENT_NAME, handleCustomEvent);
+    window.addEventListener(EVENT_NAME, handleCustom);
   }
 
   return () => {
     if (channel) channel.close();
     if (typeof window !== 'undefined') {
       window.removeEventListener('storage', handleStorage);
-      window.removeEventListener(EVENT_NAME, handleCustomEvent);
+      window.removeEventListener(EVENT_NAME, handleCustom);
     }
   };
 }
 
-// Generate realistic demo student survey responses for live testing/presentation
+// ─────────────────────────────────────────────────────────────
+// GENERATE SAMPLE RESPONSES (dùng cho thuyết trình demo)
+// ─────────────────────────────────────────────────────────────
+
 export async function generateSampleResponses(count = 12) {
   const sampleStudents = [
-    { name: 'Trần Văn Hoàng', mssv: '251A301124' },
+    { name: 'Trần Văn Hoàng',   mssv: '251A301124' },
     { name: 'Lê Thị Thu Thảo', mssv: '251A140231' },
     { name: 'Nguyễn Minh Quân', mssv: '251A010892' },
-    { name: 'Phạm Quỳnh Như', mssv: '241A040319' },
-    { name: 'Vũ Đức Thành', mssv: '251A301455' },
-    { name: 'Đặng Ngọc Ánh', mssv: '251A010678' },
-    { name: 'Bùi Gia Huy', mssv: '251A140188' },
-    { name: 'Huỳnh Bảo Ngọc', mssv: '241A040512' },
-    { name: 'Ngô Quốc Bảo', mssv: '251A301901' },
-    { name: 'Đỗ Thùy Trang', mssv: '251A010334' },
+    { name: 'Phạm Quỳnh Như',  mssv: '241A040319' },
+    { name: 'Vũ Đức Thành',    mssv: '251A301455' },
+    { name: 'Đặng Ngọc Ánh',   mssv: '251A010678' },
+    { name: 'Bùi Gia Huy',     mssv: '251A140188' },
+    { name: 'Huỳnh Bảo Ngọc',  mssv: '241A040512' },
+    { name: 'Ngô Quốc Bảo',    mssv: '251A301901' },
+    { name: 'Đỗ Thùy Trang',   mssv: '251A010334' },
     { name: 'Dương Kiến Quốc', mssv: '251A140772' },
-    { name: 'Hoàng Minh Châu', mssv: '241A040823' }
+    { name: 'Hoàng Minh Châu', mssv: '241A040823' },
   ];
 
-  const brands = ['Highlands Coffee', 'Phúc Long', 'The Coffee House', 'Katinat', 'Starbucks', 'Cà phê vỉa hè'];
-  const spendings = ['Dưới 30.000 đồng', 'Từ 30.000 – dưới 50.000 đồng', 'Từ 50.000 – dưới 70.000 đồng', 'Trên 70.000 đồng'];
-  const frequencies = ['Hằng ngày', '3–5 lần/tuần', '1–2 lần/tuần', 'Ít hơn 1 lần/tuần'];
-  const loyaltyOptions = ['Thường chọn thương hiệu quen thuộc', 'Thích thử thương hiệu mới', 'Linh hoạt tùy theo bạn bè'];
-  const reasonsList = ['Giá cao hơn', 'Chất lượng cà phê giảm', 'Không gian quán không phù hợp', 'Thái độ phục vụ kém', 'Thương hiệu đối thủ có khuyến mãi tốt hơn'];
-  const channelsList = ['Mạng xã hội (Facebook, TikTok...)', 'Bạn bè, người thân giới thiệu', 'Đi ngang qua thấy quán', 'Biển quảng cáo, KOLs'];
-  const factorsList = ['Giá cả', 'Chất lượng cà phê', 'Hương vị', 'Mức độ nổi tiếng thương hiệu', 'Không gian quán', 'Vị trí cửa hàng', 'Chất lượng phục vụ', 'Khuyến mãi / Ưu đãi', 'Sự đa dạng menu'];
+  const brands     = ['Highlands Coffee', 'Phúc Long', 'The Coffee House', 'Katinat', 'Starbucks', 'Cà phê vỉa hè'];
+  const spendings  = ['Dưới 30.000 đồng', 'Từ 30.000 – dưới 50.000 đồng', 'Từ 50.000 – dưới 70.000 đồng', 'Trên 70.000 đồng'];
+  const freqs      = ['Hằng ngày', '3–5 lần/tuần', '1–2 lần/tuần', 'Ít hơn 1 lần/tuần'];
+  const loyalties  = ['Thường chọn thương hiệu quen thuộc', 'Thích thử thương hiệu mới', 'Linh hoạt tùy theo bạn bè'];
+  const reasons    = ['Giá cao hơn', 'Chất lượng cà phê giảm', 'Không gian quán không phù hợp', 'Thái độ phục vụ kém', 'Thương hiệu đối thủ có khuyến mãi tốt hơn'];
+  const channels   = ['Mạng xã hội (Facebook, TikTok...)', 'Bạn bè, người thân giới thiệu', 'Đi ngang qua thấy quán', 'Biển quảng cáo, KOLs'];
+  const factors    = ['Giá cả', 'Chất lượng cà phê', 'Hương vị', 'Mức độ nổi tiếng thương hiệu', 'Không gian quán', 'Vị trí cửa hàng', 'Chất lượng phục vụ', 'Khuyến mãi / Ưu đãi', 'Sự đa dạng menu'];
 
-  const generated = [];
   const selectedCount = Math.min(count, sampleStudents.length);
+  const generated = [];
 
   for (let i = 0; i < selectedCount; i++) {
     const student = sampleStudents[i];
-    const preferredBrand = brands[i % (brands.length - 1)];
-    const likertScores = {};
-    factorsList.forEach(f => {
-      likertScores[f] = Math.floor(Math.random() * 2) + 4; // 4 or 5
-    });
-    likertScores['Giá cả'] = 5;
-    likertScores['Hương vị'] = 5;
-    likertScores['Không gian quán'] = i % 2 === 0 ? 5 : 4;
+    const brand   = brands[i % (brands.length - 1)];
+    const likert  = {};
+    factors.forEach(f => { likert[f] = Math.floor(Math.random() * 2) + 4; });
+    likert['Giá cả']    = 5;
+    likert['Hương vị']  = 5;
+    likert['Không gian quán'] = i % 2 === 0 ? 5 : 4;
 
     generated.push({
-      id: 'seed_' + (Date.now() + i) + '_' + Math.random().toString(36).substr(2, 4),
-      timestamp: new Date(Date.now() - (selectedCount - i) * 1000 * 120).toISOString(),
+      id:          'seed_' + (Date.now() + i) + '_' + Math.random().toString(36).substr(2, 4),
+      timestamp:   new Date(Date.now() - (selectedCount - i) * 120000).toISOString(),
       studentName: student.name,
-      mssv: student.mssv,
+      mssv:        student.mssv,
       answers: {
-        1: frequencies[i % frequencies.length],
-        2: ['Mua trực tiếp tại quán / cửa hàng'],
-        3: spendings[i % spendings.length],
-        4: ['Highlands Coffee', 'Phúc Long', preferredBrand],
-        5: preferredBrand,
-        6: [channelsList[i % channelsList.length]],
-        7: ['Giá cả', 'Hương vị'],
-        8: likertScores,
+        1:  freqs[i % freqs.length],
+        2:  ['Mua trực tiếp tại quán / cửa hàng'],
+        3:  spendings[i % spendings.length],
+        4:  ['Highlands Coffee', 'Phúc Long', brand],
+        5:  brand,
+        6:  [channels[i % channels.length]],
+        7:  ['Giá cả', 'Hương vị'],
+        8:  likert,
         10: 'Không gian yên tĩnh, cà phê đậm đà và giá cả phù hợp túi tiền sinh viên VHU.',
-        11: [reasonsList[i % reasonsList.length]],
-        12: loyaltyOptions[i % loyaltyOptions.length],
+        11: [reasons[i % reasons.length]],
+        12: loyalties[i % loyalties.length],
         13: '5 - Rất muốn',
         14: '18–20 tuổi',
-        15: '2 - 4 triệu đồng'
-      }
+        15: '2 - 4 triệu đồng',
+      },
     });
   }
 
   const current = getSavedResponses();
-  const merged = [...generated, ...current];
-  memoryStore = merged;
-  if (typeof localStorage !== 'undefined') {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
-    } catch (e) {}
-  }
+  const merged  = [...generated, ...current];
+  persistLocal(merged);
 
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new CustomEvent(EVENT_NAME, { detail: { type: 'BATCH_ADDED' } }));
@@ -352,163 +309,91 @@ export async function generateSampleResponses(count = 12) {
 
   if (typeof BroadcastChannel !== 'undefined') {
     try {
-      const channel = new BroadcastChannel(CHANNEL_NAME);
-      channel.postMessage({ type: 'BATCH_ADDED' });
-      channel.close();
-    } catch (e) {}
-  }
-
-  // Push samples to Cloud endpoint if configured
-  const cloudUrl = getCloudSyncUrl();
-  if (cloudUrl) {
-    try {
-      const isFirebase = cloudUrl.includes('firebasedatabase.app') || cloudUrl.includes('firebaseio.com');
-      const postUrl = isFirebase && !cloudUrl.endsWith('.json') ? `${cloudUrl.replace(/\/$/, '')}/surveys.json` : cloudUrl;
-
-      for (const item of generated) {
-        await fetch(postUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(item)
-        });
-      }
-    } catch (e) {}
+      const ch = new BroadcastChannel(CHANNEL_NAME);
+      ch.postMessage({ type: 'BATCH_ADDED' });
+      ch.close();
+    } catch (_) {}
   }
 
   return generated;
 }
 
-// Aggregate responses into real-time visual statistics
+// ─────────────────────────────────────────────────────────────
+// CALCULATE AGGREGATED STATS
+// ─────────────────────────────────────────────────────────────
+
 export function calculateAggregatedStats(responses) {
   const totalCount = Array.isArray(responses) ? responses.length : 0;
+  const emptyLikert = {
+    'Giá cả': '0.0', 'Chất lượng cà phê': '0.0', 'Hương vị': '0.0',
+    'Không gian quán': '0.0', 'Vị trí cửa hàng': '0.0', 'Chất lượng phục vụ': '0.0',
+    'Khuyến mãi / Ưu đãi': '0.0', 'Mức độ nổi tiếng thương hiệu': '0.0', 'Sự đa dạng menu': '0.0',
+  };
+
   if (totalCount === 0) {
     return {
       totalCount: 0,
-      brandCounts: {},
-      spendingCounts: {},
-      frequencyCounts: {},
-      likertAverages: {
-        'Giá cả': '0.0',
-        'Chất lượng cà phê': '0.0',
-        'Hương vị': '0.0',
-        'Không gian quán': '0.0',
-        'Vị trí cửa hàng': '0.0',
-        'Chất lượng phục vụ': '0.0',
-        'Khuyến mãi / Ưu đãi': '0.0',
-        'Mức độ nổi tiếng thương hiệu': '0.0',
-        'Sự đa dạng menu': '0.0'
-      },
-      switchReasons: {},
-      loyaltyDistribution: {},
-      channelReach: {},
-      crossTabSpendingBrand: {}
+      brandCounts: {}, spendingCounts: {}, frequencyCounts: {},
+      likertAverages: emptyLikert,
+      switchReasons: {}, loyaltyDistribution: {}, channelReach: {}, crossTabSpendingBrand: {},
     };
   }
 
-  // Question 5: Top Selected Coffee Brands
-  const brandCounts = {};
-  // Question 3: Average Spending per visit
-  const spendingCounts = {};
-  // Question 1: Frequency
-  const frequencyCounts = {};
-  // Question 8: Likert Matrix Average Ratings
-  const likertSums = {};
-  const likertCounts = {};
-  // Question 11: Switch Reasons
-  const switchReasons = {};
-  // Question 12: Loyalty Types
-  const loyaltyDistribution = {};
-  // Question 6: Channel Reach
-  const channelReach = {};
-  // Cross-Tab: Spending vs Brand
-  const crossTabSpendingBrand = {};
+  const brandCounts = {}, spendingCounts = {}, frequencyCounts = {};
+  const likertSums  = {}, likertCounts   = {};
+  const switchReasons = {}, loyaltyDistribution = {}, channelReach = {}, crossTabSpendingBrand = {};
 
   responses.forEach(r => {
     const a = r?.answers;
     if (!a) return;
-    
-    // Brand (Q5)
-    if (a[5]) {
-      brandCounts[a[5]] = (brandCounts[a[5]] || 0) + 1;
-    }
 
-    // Spending (Q3)
+    // Q5 — Thương hiệu
+    if (a[5]) brandCounts[a[5]] = (brandCounts[a[5]] || 0) + 1;
+
+    // Q3 — Chi tiêu
     if (a[3]) {
       spendingCounts[a[3]] = (spendingCounts[a[3]] || 0) + 1;
-
-      // Cross-Tab
       if (a[5]) {
-        if (!crossTabSpendingBrand[a[3]]) {
-          crossTabSpendingBrand[a[3]] = {};
-        }
+        if (!crossTabSpendingBrand[a[3]]) crossTabSpendingBrand[a[3]] = {};
         crossTabSpendingBrand[a[3]][a[5]] = (crossTabSpendingBrand[a[3]][a[5]] || 0) + 1;
       }
     }
 
-    // Frequency (Q1)
-    if (a[1]) {
-      frequencyCounts[a[1]] = (frequencyCounts[a[1]] || 0) + 1;
-    }
+    // Q1 — Tần suất
+    if (a[1]) frequencyCounts[a[1]] = (frequencyCounts[a[1]] || 0) + 1;
 
-    // Likert Matrix (Q8)
+    // Q8 — Likert
     if (a[8] && typeof a[8] === 'object') {
       Object.entries(a[8]).forEach(([factor, score]) => {
-        likertSums[factor] = (likertSums[factor] || 0) + Number(score);
+        likertSums[factor]  = (likertSums[factor]  || 0) + Number(score);
         likertCounts[factor] = (likertCounts[factor] || 0) + 1;
       });
     }
 
-    // Channels (Q6)
+    // Q6 — Kênh tiếp cận
     if (Array.isArray(a[6])) {
-      a[6].forEach(ch => {
-        channelReach[ch] = (channelReach[ch] || 0) + 1;
-      });
+      a[6].forEach(ch => { channelReach[ch] = (channelReach[ch] || 0) + 1; });
     }
 
-    // Switch Reasons (Q11)
+    // Q11 — Lý do chuyển đổi
     if (Array.isArray(a[11])) {
-      a[11].forEach(reason => {
-        switchReasons[reason] = (switchReasons[reason] || 0) + 1;
-      });
+      a[11].forEach(r => { switchReasons[r] = (switchReasons[r] || 0) + 1; });
     }
 
-    // Loyalty (Q12)
-    if (a[12]) {
-      loyaltyDistribution[a[12]] = (loyaltyDistribution[a[12]] || 0) + 1;
-    }
+    // Q12 — Loyalty
+    if (a[12]) loyaltyDistribution[a[12]] = (loyaltyDistribution[a[12]] || 0) + 1;
   });
 
-  // Calculate Likert Averages out of 5.0
+  const defaultFactors = Object.keys(emptyLikert);
   const likertAverages = {};
-  const defaultFactors = [
-    'Giá cả',
-    'Chất lượng cà phê',
-    'Hương vị',
-    'Không gian quán',
-    'Vị trí cửa hàng',
-    'Chất lượng phục vụ',
-    'Khuyến mãi / Ưu đãi',
-    'Mức độ nổi tiếng thương hiệu',
-    'Sự đa dạng menu'
-  ];
-
-  defaultFactors.forEach(factor => {
-    if (likertCounts[factor]) {
-      likertAverages[factor] = (likertSums[factor] / likertCounts[factor]).toFixed(1);
-    } else {
-      likertAverages[factor] = '0.0';
-    }
+  defaultFactors.forEach(f => {
+    likertAverages[f] = likertCounts[f]
+      ? (likertSums[f] / likertCounts[f]).toFixed(1)
+      : '0.0';
   });
 
   return {
-    totalCount,
-    brandCounts,
-    spendingCounts,
-    frequencyCounts,
-    likertAverages,
-    switchReasons,
-    loyaltyDistribution,
-    channelReach,
-    crossTabSpendingBrand
+    totalCount, brandCounts, spendingCounts, frequencyCounts,
+    likertAverages, switchReasons, loyaltyDistribution, channelReach, crossTabSpendingBrand,
   };
 }

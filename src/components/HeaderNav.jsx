@@ -16,8 +16,8 @@ export default function HeaderNav({ activeTab, setActiveTab, isDark, setIsDark, 
           <span className="material-symbols-outlined" style={{ color: 'var(--color-on-primary)', fontSize: '1.1rem' }}>local_cafe</span>
         </div>
         <div className="vhu-brand-text">
-          <h1>TRƯỜNG ĐẠI HỌC VĂN HIẾN</h1>
-          <p>KHOA MARKETING · NHÓM 3</p>
+          <h1>ĐẠI HỌC VĂN HIẾN</h1>
+          <p>MARKETING CĂN BẢN · NHÓM 3</p>
         </div>
 
         {/* Research topic pill */}
@@ -30,7 +30,7 @@ export default function HeaderNav({ activeTab, setActiveTab, isDark, setIsDark, 
           marginLeft: '0.5rem'
         }} className="hidden-mobile">
           <span style={{ fontSize: '0.65rem', fontWeight: 700, color: 'var(--color-primary)', letterSpacing: '0.05em', textTransform: 'uppercase' }}>
-            Đề Tài Nghiên Cứu Khoa Học
+            Đề Tài Nghiên Cứu Và Xây Dựng Bảng Câu Hỏi
           </span>
           <span style={{ fontSize: '0.65rem', color: 'var(--color-text-muted)' }}>•</span>
           <span style={{ fontSize: '0.65rem', color: 'var(--color-text-muted)' }}>Hành vi người tiêu dùng Gen Z</span>
