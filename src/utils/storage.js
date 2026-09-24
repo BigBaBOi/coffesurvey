@@ -86,8 +86,10 @@ export async function fetchCloudResponses() {
   try {
     // GET request để lấy tất cả responses từ Sheet
     const res = await fetch(`${GOOGLE_SHEET_API}?action=getAll`, {
-      method: 'GET',
-      cache: 'no-store',
+      method:      'GET',
+      mode:        'cors',
+      credentials: 'omit',   // Không gửi Google auth cookies → tránh redirect về login
+      cache:       'no-store',
     });
 
     if (!res.ok) return getSavedResponses();
