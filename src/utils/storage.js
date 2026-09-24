@@ -11,8 +11,14 @@ const CLOUD_API_URL = `https://api.restful-api.dev/objects/${CLOUD_MASTER_ID}`;
 // Default clean storage (0 initial demo responses)
 const INITIAL_SEED_RESPONSES = [];
 
+// Memory fallback if localStorage is unavailable
+let memoryStore = null;
+
 // Initialize / Read LocalStorage
 export function getSavedResponses() {
+  if (typeof localStorage === 'undefined') {
+    return memoryStore || [];
+  }
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw === null) {
@@ -22,7 +28,7 @@ export function getSavedResponses() {
     return JSON.parse(raw);
   } catch (e) {
     console.error("Error reading responses from localStorage:", e);
-    return [];
+    return memoryStore || [];
   }
 }
 
@@ -55,7 +61,10 @@ export async function fetchCloudResponses() {
 
       // Save merged list locally if count differs
       if (merged.length !== localList.length) {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
+        memoryStore = merged;
+        if (typeof localStorage !== 'undefined') {
+          try { localStorage.setItem(STORAGE_KEY, JSON.stringify(merged)); } catch (e) {}
+        }
         if (typeof window !== 'undefined') {
           window.dispatchEvent(new CustomEvent(EVENT_NAME, { detail: { type: 'CLOUD_SYNCED', count: merged.length } }));
         }
@@ -80,12 +89,15 @@ export async function saveStudentResponse(studentName, mssv, answers) {
   };
 
   const updated = [newEntry, ...responses];
+  memoryStore = updated;
   
   // 1. Instant local persistence
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
-  } catch (e) {
-    console.error("Error writing to localStorage:", e);
+  if (typeof localStorage !== 'undefined') {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+    } catch (e) {
+      console.error("Error writing to localStorage:", e);
+    }
   }
 
   // 2. Broadcast immediately in current tab & across tabs
@@ -110,8 +122,7 @@ export async function saveStudentResponse(studentName, mssv, answers) {
       if (cloudRes.ok) {
         const cloudJson = await cloudRes.json();
         const existingCloudList = cloudJson?.data?.surveyList || [];
-        // Filter duplicate if already exists
-        const filtered = existingCloudList.filter(x => x.id !== newEntry.id);
+        const filtered = existingCloudList.filter(x => x && x.id !== newEntry.id);
         latestList = [newEntry, ...filtered];
       }
     } catch (e) {
@@ -135,10 +146,13 @@ export async function saveStudentResponse(studentName, mssv, answers) {
 
 // Completely wipe all survey responses (Local + Cloud)
 export async function clearAllResponses() {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify([]));
-  } catch (e) {
-    console.error("Error clearing localStorage:", e);
+  memoryStore = [];
+  if (typeof localStorage !== 'undefined') {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify([]));
+    } catch (e) {
+      console.error("Error clearing localStorage:", e);
+    }
   }
 
   if (typeof window !== 'undefined') {
