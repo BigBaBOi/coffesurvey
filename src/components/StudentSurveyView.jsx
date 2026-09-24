@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { SURVEY_QUESTIONS } from '../data/surveyData';
-import { saveStudentResponse } from '../utils/storage';
+import { saveStudentResponse, setCloudSyncUrl, getCloudSyncUrl } from '../utils/storage';
 import confetti from 'canvas-confetti';
 import { CheckCircle2, Send, ChevronLeft, ChevronRight, User, IdCard, Award, Sparkles, Coffee } from 'lucide-react';
 
@@ -11,6 +11,21 @@ export default function StudentSurveyView() {
   const [currentStep, setCurrentStep] = useState(0);
   const [answers, setAnswers] = useState({});
   const [isSubmitted, setIsSubmitted] = useState(false);
+
+  // Auto-configure Cloud URL from QR scan parameter
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    const cloudParam = params.get('cloud');
+    if (cloudParam) {
+      const decoded = decodeURIComponent(cloudParam);
+      // Only set if different from current (avoid unnecessary writes)
+      if (getCloudSyncUrl() !== decoded) {
+        setCloudSyncUrl(decoded);
+        console.log('[VHU Cloud] Auto-configured cloud URL from QR:', decoded);
+      }
+    }
+  }, []);
 
   const currentQ = SURVEY_QUESTIONS[currentStep];
 

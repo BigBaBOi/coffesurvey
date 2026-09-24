@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import { X, Smartphone, Copy, Check, ExternalLink, QrCode, Globe, Edit3, RefreshCw } from 'lucide-react';
+import { getCloudSyncUrl } from '../utils/storage';
 
 export default function QRCodeModal({ onClose, isDark }) {
   const [copied, setCopied] = useState(false);
@@ -12,7 +13,10 @@ export default function QRCodeModal({ onClose, isDark }) {
     if (typeof window === 'undefined') return '';
     const origin = window.location.origin;
     const pathname = window.location.pathname.replace(/\/$/, '');
-    return `${origin}${pathname}/?mode=student`;
+    // Append cloud URL so student phones auto-configure on scan
+    const cloudUrl = getCloudSyncUrl();
+    const cloudParam = cloudUrl ? `&cloud=${encodeURIComponent(cloudUrl)}` : '';
+    return `${origin}${pathname}/?mode=student${cloudParam}`;
   }, []);
 
   // Compute the final QR URL
@@ -24,6 +28,11 @@ export default function QRCodeModal({ onClose, isDark }) {
     }
     if (!url.includes('mode=student')) {
       url += url.includes('?') ? '&mode=student' : '?mode=student';
+    }
+    // Also append cloud URL to custom domain
+    const cloudUrl = getCloudSyncUrl();
+    if (cloudUrl && !url.includes('cloud=')) {
+      url += `&cloud=${encodeURIComponent(cloudUrl)}`;
     }
     return url;
   }, [customDomain, defaultUrl]);
