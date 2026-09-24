@@ -6,9 +6,11 @@ import {
   subscribeRealtimeUpdates,
   clearAllResponses,
   generateSampleResponses,
-  saveStudentResponse
+  saveStudentResponse,
+  getCloudSyncUrl
 } from '../utils/storage';
 import { exportSurveyPDFBackup } from '../utils/pdfExport';
+import CloudSyncModal from './CloudSyncModal';
 import {
   BarChart3,
   Users,
@@ -33,7 +35,8 @@ import {
   Coffee,
   PlusCircle,
   RefreshCw,
-  Globe2
+  Globe2,
+  Settings
 } from 'lucide-react';
 
 export default function LiveAnalyticsDashboard({ onOpenQR }) {
@@ -42,6 +45,7 @@ export default function LiveAnalyticsDashboard({ onOpenQR }) {
   const [pulse, setPulse] = useState(false);
   const [isSyncingCloud, setIsSyncingCloud] = useState(false);
   const [showClearModal, setShowClearModal] = useState(false);
+  const [showCloudModal, setShowCloudModal] = useState(false);
   const [isExportingPDF, setIsExportingPDF] = useState(false);
   const [activeViewTab, setActiveViewTab] = useState('overview'); // 'overview' | 'radar' | 'heatmap' | 'loyalty' | 'table'
 
@@ -189,9 +193,25 @@ export default function LiveAnalyticsDashboard({ onOpenQR }) {
             <h2 style={{ fontSize: '1.55rem', fontWeight: 900, color: '#002B80', letterSpacing: '-0.01em' }}>
               TỔNG HỢP & PHÂN TÍCH MARKETING REAL-TIME
             </h2>
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', background: '#E0F2FE', color: '#0284C7', fontSize: '0.8rem', fontWeight: 800, padding: '0.25rem 0.65rem', borderRadius: '999px', border: '1px solid #BAE6FD' }}>
-              <Globe2 size={13} /> Cloud Real-Time
-            </span>
+            <button
+              onClick={() => setShowCloudModal(true)}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '0.35rem',
+                background: getCloudSyncUrl() ? '#E0F2FE' : '#FEF3C7',
+                color: getCloudSyncUrl() ? '#0284C7' : '#B45309',
+                fontSize: '0.8rem',
+                fontWeight: 800,
+                padding: '0.25rem 0.65rem',
+                borderRadius: '999px',
+                border: `1px solid ${getCloudSyncUrl() ? '#BAE6FD' : '#FDE68A'}`,
+                cursor: 'pointer'
+              }}
+              title="Bấm để cấu hình kết nối Cloud Database"
+            >
+              <Globe2 size={13} /> {getCloudSyncUrl() ? '🟢 Cloud Real-Time Đang Bật' : '⚙️ Cấu Hình Realtime Cloud'}
+            </button>
             {pulse && (
               <span style={{ background: '#10B981', color: '#FFF', fontSize: '0.82rem', fontWeight: 800, padding: '0.25rem 0.75rem', borderRadius: '999px', animation: 'pulseGlow 1s infinite' }}>
                 ⚡ Vừa có lượt nộp mới!
@@ -199,7 +219,7 @@ export default function LiveAnalyticsDashboard({ onOpenQR }) {
             )}
           </div>
           <p style={{ fontSize: '0.92rem', color: '#0055D4', fontWeight: 700, marginTop: '0.25rem' }}>
-            Hệ thống tự động đồng bộ thời gian thực từ mã QR Khảo sát Sinh viên VHU qua Cloud
+            Hệ thống tự động đồng bộ thời gian thực từ mã QR Khảo sát Sinh viên VHU
           </p>
         </div>
 
@@ -808,6 +828,11 @@ export default function LiveAnalyticsDashboard({ onOpenQR }) {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Cloud Sync Configuration Modal */}
+      {showCloudModal && (
+        <CloudSyncModal onClose={() => { setShowCloudModal(false); syncCloud(true); }} />
       )}
     </div>
   );

@@ -1,18 +1,43 @@
 // Helper module for real-time survey data management & cross-device cloud sync
 
 const STORAGE_KEY = 'vhu_survey_responses_v1';
+const CLOUD_URL_KEY = 'vhu_cloud_sync_endpoint_url_v1';
 const CHANNEL_NAME = 'vhu_survey_realtime';
 const EVENT_NAME = 'vhu_survey_updated';
-
-// Cloud Master Store ID on free global REST API for instant cross-device realtime sync
-const CLOUD_MASTER_ID = 'ff808181a09d98f701a0d3162a4e06c1';
-const CLOUD_API_URL = `https://api.restful-api.dev/objects/${CLOUD_MASTER_ID}`;
 
 // Default clean storage (0 initial demo responses)
 const INITIAL_SEED_RESPONSES = [];
 
 // Memory fallback if localStorage is unavailable
 let memoryStore = null;
+
+// Get configured Cloud Sync URL
+export function getCloudSyncUrl() {
+  if (typeof localStorage !== 'undefined') {
+    try {
+      const saved = localStorage.getItem(CLOUD_URL_KEY);
+      if (saved && saved.trim()) return saved.trim();
+    } catch (e) {}
+  }
+  return '';
+}
+
+// Set or update Cloud Sync URL
+export function setCloudSyncUrl(url) {
+  const cleanUrl = (url || '').trim();
+  if (typeof localStorage !== 'undefined') {
+    try {
+      if (cleanUrl) {
+        localStorage.setItem(CLOUD_URL_KEY, cleanUrl);
+      } else {
+        localStorage.removeItem(CLOUD_URL_KEY);
+      }
+    } catch (e) {}
+  }
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent(EVENT_NAME, { detail: { type: 'CLOUD_CONFIG_CHANGED' } }));
+  }
+}
 
 // Initialize / Read LocalStorage
 export function getSavedResponses() {
@@ -34,41 +59,68 @@ export function getSavedResponses() {
 
 // Fetch responses from global Cloud database and merge with local data
 export async function fetchCloudResponses() {
+  const cloudUrl = getCloudSyncUrl();
+  if (!cloudUrl) return getSavedResponses();
+
   try {
-    const res = await fetch(CLOUD_API_URL, { cache: 'no-store' });
+    const isFirebase = cloudUrl.includes('firebasedatabase.app') || cloudUrl.includes('firebaseio.com');
+    const fetchUrl = isFirebase && !cloudUrl.endsWith('.json') ? `${cloudUrl.replace(/\/$/, '')}/surveys.json` : cloudUrl;
+
+    const res = await fetch(fetchUrl, {
+      method: 'GET',
+      headers: { 'Accept': 'application/json' },
+      cache: 'no-store'
+    });
+
     if (!res.ok) return getSavedResponses();
     const json = await res.json();
-    const cloudList = json?.data?.surveyList;
-    if (Array.isArray(cloudList)) {
+    
+    let cloudList = [];
+    if (Array.isArray(json)) {
+      cloudList = json;
+    } else if (json && typeof json === 'object') {
+      if (Array.isArray(json.data?.surveyList)) {
+        cloudList = json.data.surveyList;
+      } else if (Array.isArray(json.surveys)) {
+        cloudList = json.surveys;
+      } else {
+        // Firebase object format: { "-Nxxxx": { ...entry }, "-Nyyyy": { ...entry } }
+        cloudList = Object.entries(json).map(([k, v]) => ({
+          ...v,
+          id: v.id || k
+        }));
+      }
+    }
+
+    if (Array.isArray(cloudList) && cloudList.length > 0) {
       const localList = getSavedResponses();
-      
-      // Merge by ID or unique composite key
       const mergedMap = new Map();
       
-      // Add local items first
       localList.forEach(item => {
-        if (item && item.id) mergedMap.set(item.id, item);
+        if (item && (item.id || item.timestamp)) {
+          mergedMap.set(item.id || `${item.studentName}_${item.mssv}_${item.timestamp}`, item);
+        }
       });
 
-      // Overlay cloud items
       cloudList.forEach(item => {
-        if (item && item.id) mergedMap.set(item.id, item);
+        if (item && (item.id || item.timestamp)) {
+          mergedMap.set(item.id || `${item.studentName}_${item.mssv}_${item.timestamp}`, item);
+        }
       });
 
       const merged = Array.from(mergedMap.values()).sort(
         (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
       );
 
-      // Save merged list locally if count differs
-      if (merged.length !== localList.length) {
-        memoryStore = merged;
-        if (typeof localStorage !== 'undefined') {
-          try { localStorage.setItem(STORAGE_KEY, JSON.stringify(merged)); } catch (e) {}
-        }
-        if (typeof window !== 'undefined') {
-          window.dispatchEvent(new CustomEvent(EVENT_NAME, { detail: { type: 'CLOUD_SYNCED', count: merged.length } }));
-        }
+      memoryStore = merged;
+      if (typeof localStorage !== 'undefined') {
+        try { localStorage.setItem(STORAGE_KEY, JSON.stringify(merged)); } catch (e) {}
       }
+
+      if (merged.length !== localList.length && typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent(EVENT_NAME, { detail: { type: 'CLOUD_SYNCED', count: merged.length } }));
+      }
+
       return merged;
     }
   } catch (err) {
@@ -113,32 +165,21 @@ export async function saveStudentResponse(studentName, mssv, answers) {
     } catch (err) {}
   }
 
-  // 3. Sync to Global Cloud Store (so presenter's laptop receives it immediately from any phone)
-  try {
-    // Fetch latest cloud state first to prevent overwrites
-    let latestList = [newEntry];
+  // 3. Sync to Cloud endpoint if configured
+  const cloudUrl = getCloudSyncUrl();
+  if (cloudUrl) {
     try {
-      const cloudRes = await fetch(CLOUD_API_URL, { cache: 'no-store' });
-      if (cloudRes.ok) {
-        const cloudJson = await cloudRes.json();
-        const existingCloudList = cloudJson?.data?.surveyList || [];
-        const filtered = existingCloudList.filter(x => x && x.id !== newEntry.id);
-        latestList = [newEntry, ...filtered];
-      }
-    } catch (e) {
-      latestList = updated;
-    }
+      const isFirebase = cloudUrl.includes('firebasedatabase.app') || cloudUrl.includes('firebaseio.com');
+      const postUrl = isFirebase && !cloudUrl.endsWith('.json') ? `${cloudUrl.replace(/\/$/, '')}/surveys.json` : cloudUrl;
 
-    await fetch(CLOUD_API_URL, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        name: 'VHU_MARKETING_SURVEY_PROD_V1',
-        data: { surveyList: latestList }
-      })
-    });
-  } catch (cloudErr) {
-    console.warn("Cloud push notice:", cloudErr);
+      await fetch(postUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newEntry)
+      });
+    } catch (cloudErr) {
+      console.warn("Cloud push notice:", cloudErr);
+    }
   }
 
   return newEntry;
@@ -167,17 +208,23 @@ export async function clearAllResponses() {
     } catch (err) {}
   }
 
-  // Clear cloud master store
-  try {
-    await fetch(CLOUD_API_URL, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        name: 'VHU_MARKETING_SURVEY_PROD_V1',
-        data: { surveyList: [] }
-      })
-    });
-  } catch (e) {}
+  const cloudUrl = getCloudSyncUrl();
+  if (cloudUrl) {
+    try {
+      const isFirebase = cloudUrl.includes('firebasedatabase.app') || cloudUrl.includes('firebaseio.com');
+      const deleteUrl = isFirebase && !cloudUrl.endsWith('.json') ? `${cloudUrl.replace(/\/$/, '')}/surveys.json` : cloudUrl;
+      
+      if (isFirebase) {
+        await fetch(deleteUrl, { method: 'DELETE' });
+      } else {
+        await fetch(deleteUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'clear' })
+        });
+      }
+    } catch (e) {}
+  }
 
   return [];
 }
@@ -203,7 +250,7 @@ export function subscribeRealtimeUpdates(callback) {
 
   // 2. Storage event listener (other tabs on same origin)
   const handleStorage = (event) => {
-    if (event.key === STORAGE_KEY) {
+    if (event.key === STORAGE_KEY || event.key === CLOUD_URL_KEY) {
       callback({ type: 'STORAGE_CHANGED' });
     }
   };
@@ -292,9 +339,12 @@ export async function generateSampleResponses(count = 12) {
 
   const current = getSavedResponses();
   const merged = [...generated, ...current];
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
-  } catch (e) {}
+  memoryStore = merged;
+  if (typeof localStorage !== 'undefined') {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
+    } catch (e) {}
+  }
 
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new CustomEvent(EVENT_NAME, { detail: { type: 'BATCH_ADDED' } }));
@@ -308,17 +358,22 @@ export async function generateSampleResponses(count = 12) {
     } catch (e) {}
   }
 
-  // Push to cloud master store
-  try {
-    await fetch(CLOUD_API_URL, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        name: 'VHU_MARKETING_SURVEY_PROD_V1',
-        data: { surveyList: merged }
-      })
-    });
-  } catch (e) {}
+  // Push samples to Cloud endpoint if configured
+  const cloudUrl = getCloudSyncUrl();
+  if (cloudUrl) {
+    try {
+      const isFirebase = cloudUrl.includes('firebasedatabase.app') || cloudUrl.includes('firebaseio.com');
+      const postUrl = isFirebase && !cloudUrl.endsWith('.json') ? `${cloudUrl.replace(/\/$/, '')}/surveys.json` : cloudUrl;
+
+      for (const item of generated) {
+        await fetch(postUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(item)
+        });
+      }
+    } catch (e) {}
+  }
 
   return generated;
 }
@@ -369,7 +424,7 @@ export function calculateAggregatedStats(responses) {
   const crossTabSpendingBrand = {};
 
   responses.forEach(r => {
-    const a = r.answers;
+    const a = r?.answers;
     if (!a) return;
     
     // Brand (Q5)
